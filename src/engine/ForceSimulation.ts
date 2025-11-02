@@ -34,13 +34,30 @@ export class ForceSimulation {
    * Initialize simulation with labels
    */
   setLabels(labels: Label[]): void {
-    this.labels = labels.map((label, index) => {
-      // Initial position: spiral around anchor
-      const angle = (index * Math.PI * 2) / labels.length;
+    // Calculate center point from all anchors
+    let centerX = 0;
+    let centerY = 0;
+    for (const label of labels) {
+      centerX += label.anchor.x;
+      centerY += label.anchor.y;
+    }
+    centerX /= labels.length || 1;
+    centerY /= labels.length || 1;
+
+    this.labels = labels.map((label) => {
+      // Initial position: place label radially outward from center along anchor direction
+      const dx = label.anchor.x - centerX;
+      const dy = label.anchor.y - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // If anchor is at center, use a random angle
+      const angle = distance > 1 ? Math.atan2(dy, dx) : Math.random() * Math.PI * 2;
       const radius = this.config.minDistance + 20;
+
+      // Place label in the direction of its anchor, at minDistance
       const position = new Vector2(
-        label.anchor.x + Math.cos(angle) * radius,
-        label.anchor.y + Math.sin(angle) * radius
+        centerX + Math.cos(angle) * radius,
+        centerY + Math.sin(angle) * radius
       );
 
       return {

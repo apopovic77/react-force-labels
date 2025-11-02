@@ -1,6 +1,6 @@
 {
   "name": "react-force-labels",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Force-directed label positioning system for React - automatically distributes labels around anchor points",
   "type": "module",
   "main": "./dist/index.js",
