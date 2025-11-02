@@ -91,6 +91,7 @@ export class ForceSimulation {
       // Apply forces
       this.applyAnchorForces();
       this.applyRepulsionForces();
+      this.applyAnchorRepulsion(); // NEW: Anchors repel labels like fixed stars
       if (this.config.enableCollision) {
         this.applyCollisionForces();
       }
@@ -168,6 +169,37 @@ export class ForceSimulation {
           a.force.y -= fy;
           b.force.x += fx;
           b.force.y += fy;
+        }
+      }
+    }
+  }
+
+  /**
+   * Repel labels from ALL anchor points (like fixed stars)
+   * This prevents labels from overlapping anchor points
+   */
+  private applyAnchorRepulsion(): void {
+    const anchorRepulsionRadius = this.config.repulsionRadius * 0.5; // Smaller radius for anchors
+    const anchorRepulsionStrength = this.config.repulsionStrength * 2; // Stronger repulsion
+
+    for (const label of this.labels) {
+      // Check against ALL anchors (including other labels' anchors)
+      for (const otherLabel of this.labels) {
+        // Skip own anchor (we want to be attracted to it)
+        if (label.id === otherLabel.id) continue;
+
+        const dx = label.position.x - otherLabel.anchor.x;
+        const dy = label.position.y - otherLabel.anchor.y;
+        const distance = Math.sqrt(dx ** 2 + dy ** 2);
+
+        // Repel if too close to another label's anchor
+        if (distance < anchorRepulsionRadius && distance > 0) {
+          const strength = anchorRepulsionStrength / (distance ** 2);
+          const fx = (dx / distance) * strength;
+          const fy = (dy / distance) * strength;
+
+          label.force.x += fx;
+          label.force.y += fy;
         }
       }
     }
