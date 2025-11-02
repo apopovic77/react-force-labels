@@ -57,6 +57,46 @@ export class ForceSimulation {
   }
 
   /**
+   * Create distance constraint force function
+   */
+  private createDistanceConstraintForce() {
+    return () => {
+      for (const node of this.nodes) {
+        if (node.isAnchor || !node.label) continue;
+
+        const dx = (node.x ?? 0) - node.anchorX;
+        const dy = (node.y ?? 0) - node.anchorY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > 0) {
+          let targetDistance = distance;
+          let strength = 0;
+
+          // Push away if too close
+          if (distance < this.config.minDistance) {
+            targetDistance = this.config.minDistance;
+            strength = 0.5; // Strong push
+          }
+          // Pull back if too far
+          else if (distance > this.config.maxDistance) {
+            targetDistance = this.config.maxDistance;
+            strength = 0.3; // Moderate pull
+          }
+
+          if (strength > 0) {
+            const angle = Math.atan2(dy, dx);
+            const targetX = node.anchorX + Math.cos(angle) * targetDistance;
+            const targetY = node.anchorY + Math.sin(angle) * targetDistance;
+
+            node.vx = (node.vx ?? 0) + (targetX - (node.x ?? 0)) * strength;
+            node.vy = (node.vy ?? 0) + (targetY - (node.y ?? 0)) * strength;
+          }
+        }
+      }
+    };
+  }
+
+  /**
    * Initialize simulation with labels
    */
   setLabels(labels: Label[]): void {
@@ -125,6 +165,9 @@ export class ForceSimulation {
       });
     }
 
+    // Custom force to enforce min/max distance from anchor
+    const distanceConstraintForce = this.createDistanceConstraintForce();
+
     // Create D3 force simulation
     this.simulation = forceSimulation<D3Node>(this.nodes)
       .alphaDecay(1 - this.config.friction) // Friction/damping
@@ -153,6 +196,7 @@ export class ForceSimulation {
         })
         .strength(1)
       )
+      .force('distanceConstraint', distanceConstraintForce)
       .stop(); // Don't auto-run, we control ticks manually
   }
 
@@ -173,21 +217,6 @@ export class ForceSimulation {
       if (node.isAnchor || !node.label) continue;
 
       const label = node.label;
-
-      // Apply min/max distance constraints
-      const dx = (node.x ?? label.position.x) - label.anchor.x;
-      const dy = (node.y ?? label.position.y) - label.anchor.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance < this.config.minDistance && distance > 0) {
-        const scale = this.config.minDistance / distance;
-        node.x = label.anchor.x + dx * scale;
-        node.y = label.anchor.y + dy * scale;
-      } else if (distance > this.config.maxDistance && distance > 0) {
-        const scale = this.config.maxDistance / distance;
-        node.x = label.anchor.x + dx * scale;
-        node.y = label.anchor.y + dy * scale;
-      }
 
       label.position.x = node.x ?? label.position.x;
       label.position.y = node.y ?? label.position.y;
@@ -235,7 +264,8 @@ export class ForceSimulation {
             return Math.max(d.width, d.height) / 2 + this.config.collisionPadding;
           })
           .strength(1)
-        );
+        )
+        .force('distanceConstraint', this.createDistanceConstraintForce());
     }
   }
 }
