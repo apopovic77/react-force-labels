@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { ForceSimulation } from '../engine/ForceSimulation';
 import type { ForceLabelsProps, PositionedLabel, LabelStyle } from '../types';
 
@@ -31,7 +31,9 @@ export const ForceLabels: React.FC<ForceLabelsProps> = ({
   const simulationRef = useRef<ForceSimulation | null>(null);
   const rafRef = useRef<number | null>(null);
   const [positionedLabels, setPositionedLabels] = useState<PositionedLabel[]>([]);
-  const mergedStyle = { ...defaultStyle, ...style };
+
+  // Memoize merged style to prevent recreating on every render
+  const mergedStyle = useMemo(() => ({ ...defaultStyle, ...style }), [style]);
 
   // Initialize simulation
   useEffect(() => {
