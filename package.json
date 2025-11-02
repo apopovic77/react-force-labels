@@ -1,6 +1,6 @@
 {
   "name": "react-force-labels",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Force-directed label positioning system for React - automatically distributes labels around anchor points",
   "type": "module",
   "main": "./dist/index.js",
@@ -54,7 +54,8 @@
     "vitest": "^1.4.0"
   },
   "dependencies": {
-    "arkturian-typescript-utils": "^1.0.0"
+    "arkturian-typescript-utils": "^1.0.0",
+    "d3-force": "^3.0.0"
   },
   "repository": {
     "type": "git",

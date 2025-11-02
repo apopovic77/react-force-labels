@@ -1,18 +1,38 @@
 import { Vector2 } from 'arkturian-typescript-utils';
 import type { Label, PositionedLabel, ForceConfig } from '../types';
+import {
+  forceSimulation,
+  forceX,
+  forceY,
+  forceManyBody,
+  forceCollide,
+  type SimulationNodeDatum,
+} from 'd3-force';
+
+interface D3Node extends SimulationNodeDatum {
+  id: string;
+  label?: PositionedLabel;
+  isAnchor?: boolean;
+  anchorX: number;
+  anchorY: number;
+  width: number;
+  height: number;
+}
 
 /**
- * Force-directed simulation engine for label positioning
+ * Force-directed simulation engine using D3-force
  *
- * Applies multiple forces:
- * 1. Anchor attraction - pulls labels towards their anchor point
- * 2. Label repulsion - pushes overlapping labels apart
- * 3. Bounds constraints - keeps labels within min/max distance
- * 4. Collision avoidance - prevents label overlap
+ * Uses proper physics simulation with:
+ * - Anchor attraction (pulls labels to their anchor points)
+ * - Label-to-label repulsion (charge force)
+ * - Label-to-anchor repulsion (anchors are fixed nodes with charge)
+ * - Collision detection (prevents overlap)
  */
 export class ForceSimulation {
   private labels: PositionedLabel[] = [];
   private config: Required<ForceConfig>;
+  private simulation: ReturnType<typeof forceSimulation<D3Node>> | null = null;
+  private nodes: D3Node[] = [];
 
   constructor(config: ForceConfig = {}) {
     this.config = {
@@ -44,31 +64,90 @@ export class ForceSimulation {
     centerX /= labels.length || 1;
     centerY /= labels.length || 1;
 
-    this.labels = labels.map((label) => {
-      // Initial position: place label radially outward from center along anchor direction
+    // Create nodes for labels AND anchors
+    this.nodes = [];
+
+    // Add label nodes
+    for (const label of labels) {
+      // Initial position: radially outward from center along anchor direction
       const dx = label.anchor.x - centerX;
       const dy = label.anchor.y - centerY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-
-      // If anchor is at center, use a random angle
       const angle = distance > 1 ? Math.atan2(dy, dx) : Math.random() * Math.PI * 2;
       const radius = this.config.minDistance + 20;
 
-      // Place label in the direction of its anchor, at minDistance
-      const position = new Vector2(
-        centerX + Math.cos(angle) * radius,
-        centerY + Math.sin(angle) * radius
-      );
-
-      return {
+      const posLabel: PositionedLabel = {
         ...label,
-        position,
+        position: new Vector2(
+          centerX + Math.cos(angle) * radius,
+          centerY + Math.sin(angle) * radius
+        ),
         velocity: new Vector2(0, 0),
         force: new Vector2(0, 0),
         width: label.width ?? 100,
         height: label.height ?? 30,
       };
-    });
+
+      this.labels.push(posLabel);
+
+      this.nodes.push({
+        id: label.id,
+        label: posLabel,
+        x: posLabel.position.x,
+        y: posLabel.position.y,
+        anchorX: label.anchor.x,
+        anchorY: label.anchor.y,
+        width: posLabel.width,
+        height: posLabel.height,
+        isAnchor: false,
+      });
+    }
+
+    // Add anchor nodes (fixed positions with charge - they repel labels!)
+    for (const label of labels) {
+      this.nodes.push({
+        id: `anchor-${label.id}`,
+        x: label.anchor.x,
+        y: label.anchor.y,
+        fx: label.anchor.x, // Fixed X
+        fy: label.anchor.y, // Fixed Y
+        anchorX: label.anchor.x,
+        anchorY: label.anchor.y,
+        width: 20, // Small anchor size
+        height: 20,
+        isAnchor: true,
+      });
+    }
+
+    // Create D3 force simulation
+    this.simulation = forceSimulation<D3Node>(this.nodes)
+      .alphaDecay(1 - this.config.friction) // Friction/damping
+      .velocityDecay(0.4) // Velocity damping
+      .force('charge', forceManyBody<D3Node>()
+        .strength((d) => {
+          // Anchors repel strongly, labels repel normally
+          return d.isAnchor
+            ? -this.config.repulsionStrength * 2
+            : -this.config.repulsionStrength;
+        })
+        .distanceMax(this.config.repulsionRadius)
+      )
+      .force('anchorX', forceX<D3Node>()
+        .x(d => d.anchorX)
+        .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+      )
+      .force('anchorY', forceY<D3Node>()
+        .y(d => d.anchorY)
+        .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+      )
+      .force('collision', forceCollide<D3Node>()
+        .radius(d => {
+          if (d.isAnchor) return 10; // Small collision for anchors
+          return Math.max(d.width, d.height) / 2 + this.config.collisionPadding;
+        })
+        .strength(1)
+      )
+      .stop(); // Don't auto-run, we control ticks manually
   }
 
   /**
@@ -76,196 +155,43 @@ export class ForceSimulation {
    * Returns true if simulation has converged
    */
   step(): boolean {
-    if (this.labels.length === 0) return true;
-
-    let maxForce = 0;
+    if (!this.simulation || this.labels.length === 0) return true;
 
     // Run multiple iterations per frame for stability
-    for (let iter = 0; iter < this.config.iterations; iter++) {
-      // Reset forces
-      for (const label of this.labels) {
-        label.force.x = 0;
-        label.force.y = 0;
+    for (let i = 0; i < this.config.iterations; i++) {
+      this.simulation.tick();
+    }
+
+    // Update label positions from D3 nodes
+    for (const node of this.nodes) {
+      if (node.isAnchor || !node.label) continue;
+
+      const label = node.label;
+
+      // Apply min/max distance constraints
+      const dx = (node.x ?? label.position.x) - label.anchor.x;
+      const dy = (node.y ?? label.position.y) - label.anchor.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < this.config.minDistance && distance > 0) {
+        const scale = this.config.minDistance / distance;
+        node.x = label.anchor.x + dx * scale;
+        node.y = label.anchor.y + dy * scale;
+      } else if (distance > this.config.maxDistance && distance > 0) {
+        const scale = this.config.maxDistance / distance;
+        node.x = label.anchor.x + dx * scale;
+        node.y = label.anchor.y + dy * scale;
       }
 
-      // Apply forces
-      this.applyAnchorForces();
-      this.applyRepulsionForces();
-      this.applyAnchorRepulsion(); // NEW: Anchors repel labels like fixed stars
-      if (this.config.enableCollision) {
-        this.applyCollisionForces();
-      }
-
-      // Update positions
-      for (const label of this.labels) {
-        // Apply force to velocity
-        label.velocity.x += label.force.x;
-        label.velocity.y += label.force.y;
-
-        // Apply friction
-        label.velocity.x *= this.config.friction;
-        label.velocity.y *= this.config.friction;
-
-        // Clamp velocity
-        const speed = Math.sqrt(label.velocity.x ** 2 + label.velocity.y ** 2);
-        if (speed > this.config.maxVelocity) {
-          label.velocity.x = (label.velocity.x / speed) * this.config.maxVelocity;
-          label.velocity.y = (label.velocity.y / speed) * this.config.maxVelocity;
-        }
-
-        // Update position
-        label.position.x += label.velocity.x;
-        label.position.y += label.velocity.y;
-
-        // Track max force for convergence check
-        const forceMag = Math.sqrt(label.force.x ** 2 + label.force.y ** 2);
-        maxForce = Math.max(maxForce, forceMag);
-      }
-
-      // Apply constraints
-      this.applyBoundsConstraints();
+      label.position.x = node.x ?? label.position.x;
+      label.position.y = node.y ?? label.position.y;
+      label.velocity.x = node.vx ?? 0;
+      label.velocity.y = node.vy ?? 0;
     }
 
     // Check convergence
-    return maxForce < this.config.threshold;
-  }
-
-  /**
-   * Attract labels towards their anchor points
-   */
-  private applyAnchorForces(): void {
-    for (const label of this.labels) {
-      const dx = label.anchor.x - label.position.x;
-      const dy = label.anchor.y - label.position.y;
-      const distance = Math.sqrt(dx ** 2 + dy ** 2);
-
-      if (distance > 0) {
-        const strength = this.config.anchorStrength * (label.priority ?? 1);
-        label.force.x += (dx / distance) * distance * strength;
-        label.force.y += (dy / distance) * distance * strength;
-      }
-    }
-  }
-
-  /**
-   * Repel overlapping labels
-   */
-  private applyRepulsionForces(): void {
-    for (let i = 0; i < this.labels.length; i++) {
-      for (let j = i + 1; j < this.labels.length; j++) {
-        const a = this.labels[i];
-        const b = this.labels[j];
-
-        const dx = b.position.x - a.position.x;
-        const dy = b.position.y - a.position.y;
-        const distance = Math.sqrt(dx ** 2 + dy ** 2);
-
-        if (distance < this.config.repulsionRadius && distance > 0) {
-          const strength = this.config.repulsionStrength / (distance ** 2);
-          const fx = (dx / distance) * strength;
-          const fy = (dy / distance) * strength;
-
-          a.force.x -= fx;
-          a.force.y -= fy;
-          b.force.x += fx;
-          b.force.y += fy;
-        }
-      }
-    }
-  }
-
-  /**
-   * Repel labels from ALL anchor points (like fixed stars)
-   * This prevents labels from overlapping anchor points
-   */
-  private applyAnchorRepulsion(): void {
-    const anchorRepulsionRadius = this.config.repulsionRadius * 0.5; // Smaller radius for anchors
-    const anchorRepulsionStrength = this.config.repulsionStrength * 2; // Stronger repulsion
-
-    for (const label of this.labels) {
-      // Check against ALL anchors (including other labels' anchors)
-      for (const otherLabel of this.labels) {
-        // Skip own anchor (we want to be attracted to it)
-        if (label.id === otherLabel.id) continue;
-
-        const dx = label.position.x - otherLabel.anchor.x;
-        const dy = label.position.y - otherLabel.anchor.y;
-        const distance = Math.sqrt(dx ** 2 + dy ** 2);
-
-        // Repel if too close to another label's anchor
-        if (distance < anchorRepulsionRadius && distance > 0) {
-          const strength = anchorRepulsionStrength / (distance ** 2);
-          const fx = (dx / distance) * strength;
-          const fy = (dy / distance) * strength;
-
-          label.force.x += fx;
-          label.force.y += fy;
-        }
-      }
-    }
-  }
-
-  /**
-   * Prevent label box overlap
-   */
-  private applyCollisionForces(): void {
-    const padding = this.config.collisionPadding;
-
-    for (let i = 0; i < this.labels.length; i++) {
-      for (let j = i + 1; j < this.labels.length; j++) {
-        const a = this.labels[i];
-        const b = this.labels[j];
-
-        // Calculate bounding box overlap
-        const dx = b.position.x - a.position.x;
-        const dy = b.position.y - a.position.y;
-
-        const minDistX = ((a.width ?? 100) + (b.width ?? 100)) / 2 + padding;
-        const minDistY = ((a.height ?? 30) + (b.height ?? 30)) / 2 + padding;
-
-        const overlapX = minDistX - Math.abs(dx);
-        const overlapY = minDistY - Math.abs(dy);
-
-        if (overlapX > 0 && overlapY > 0) {
-          // Boxes overlap - push apart on smallest overlap axis
-          const strength = 0.5;
-          if (overlapX < overlapY) {
-            // Separate horizontally
-            const fx = (dx > 0 ? overlapX : -overlapX) * strength;
-            a.force.x -= fx;
-            b.force.x += fx;
-          } else {
-            // Separate vertically
-            const fy = (dy > 0 ? overlapY : -overlapY) * strength;
-            a.force.y -= fy;
-            b.force.y += fy;
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Keep labels within min/max distance from anchor
-   */
-  private applyBoundsConstraints(): void {
-    for (const label of this.labels) {
-      const dx = label.position.x - label.anchor.x;
-      const dy = label.position.y - label.anchor.y;
-      const distance = Math.sqrt(dx ** 2 + dy ** 2);
-
-      if (distance < this.config.minDistance && distance > 0) {
-        // Too close - push away
-        const scale = this.config.minDistance / distance;
-        label.position.x = label.anchor.x + dx * scale;
-        label.position.y = label.anchor.y + dy * scale;
-      } else if (distance > this.config.maxDistance && distance > 0) {
-        // Too far - pull back
-        const scale = this.config.maxDistance / distance;
-        label.position.x = label.anchor.x + dx * scale;
-        label.position.y = label.anchor.y + dy * scale;
-      }
-    }
+    const alpha = this.simulation.alpha();
+    return alpha < this.config.threshold;
   }
 
   /**
@@ -280,5 +206,30 @@ export class ForceSimulation {
    */
   setConfig(config: Partial<ForceConfig>): void {
     this.config = { ...this.config, ...config };
+
+    // Update D3 forces if simulation exists
+    if (this.simulation) {
+      this.simulation
+        .alphaDecay(1 - this.config.friction)
+        .force('charge', forceManyBody<D3Node>()
+          .strength((d) => d.isAnchor ? -this.config.repulsionStrength * 2 : -this.config.repulsionStrength)
+          .distanceMax(this.config.repulsionRadius)
+        )
+        .force('anchorX', forceX<D3Node>()
+          .x(d => d.anchorX)
+          .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+        )
+        .force('anchorY', forceY<D3Node>()
+          .y(d => d.anchorY)
+          .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+        )
+        .force('collision', forceCollide<D3Node>()
+          .radius(d => {
+            if (d.isAnchor) return 10;
+            return Math.max(d.width, d.height) / 2 + this.config.collisionPadding;
+          })
+          .strength(1)
+        );
+    }
   }
 }
