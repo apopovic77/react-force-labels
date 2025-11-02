@@ -17,6 +17,12 @@ interface D3Node extends SimulationNodeDatum {
   anchorY: number;
   width: number;
   height: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
 }
 
 /**
@@ -97,8 +103,8 @@ export class ForceSimulation {
         y: posLabel.position.y,
         anchorX: label.anchor.x,
         anchorY: label.anchor.y,
-        width: posLabel.width,
-        height: posLabel.height,
+        width: posLabel.width ?? 100,
+        height: posLabel.height ?? 30,
         isAnchor: false,
       });
     }
@@ -124,7 +130,7 @@ export class ForceSimulation {
       .alphaDecay(1 - this.config.friction) // Friction/damping
       .velocityDecay(0.4) // Velocity damping
       .force('charge', forceManyBody<D3Node>()
-        .strength((d) => {
+        .strength((d: D3Node) => {
           // Anchors repel strongly, labels repel normally
           return d.isAnchor
             ? -this.config.repulsionStrength * 2
@@ -133,15 +139,15 @@ export class ForceSimulation {
         .distanceMax(this.config.repulsionRadius)
       )
       .force('anchorX', forceX<D3Node>()
-        .x(d => d.anchorX)
-        .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+        .x((d: D3Node) => d.anchorX)
+        .strength((d: D3Node) => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
       )
       .force('anchorY', forceY<D3Node>()
-        .y(d => d.anchorY)
-        .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+        .y((d: D3Node) => d.anchorY)
+        .strength((d: D3Node) => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
       )
       .force('collision', forceCollide<D3Node>()
-        .radius(d => {
+        .radius((d: D3Node) => {
           if (d.isAnchor) return 10; // Small collision for anchors
           return Math.max(d.width, d.height) / 2 + this.config.collisionPadding;
         })
@@ -212,19 +218,19 @@ export class ForceSimulation {
       this.simulation
         .alphaDecay(1 - this.config.friction)
         .force('charge', forceManyBody<D3Node>()
-          .strength((d) => d.isAnchor ? -this.config.repulsionStrength * 2 : -this.config.repulsionStrength)
+          .strength((d: D3Node) => d.isAnchor ? -this.config.repulsionStrength * 2 : -this.config.repulsionStrength)
           .distanceMax(this.config.repulsionRadius)
         )
         .force('anchorX', forceX<D3Node>()
-          .x(d => d.anchorX)
-          .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+          .x((d: D3Node) => d.anchorX)
+          .strength((d: D3Node) => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
         )
         .force('anchorY', forceY<D3Node>()
-          .y(d => d.anchorY)
-          .strength(d => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
+          .y((d: D3Node) => d.anchorY)
+          .strength((d: D3Node) => d.isAnchor ? 0 : this.config.anchorStrength * ((d.label?.priority ?? 1)))
         )
         .force('collision', forceCollide<D3Node>()
-          .radius(d => {
+          .radius((d: D3Node) => {
             if (d.isAnchor) return 10;
             return Math.max(d.width, d.height) / 2 + this.config.collisionPadding;
           })
